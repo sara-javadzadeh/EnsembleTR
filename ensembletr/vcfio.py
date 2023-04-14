@@ -103,8 +103,8 @@ class Readers:
                 while True:
                     try:
                         new_record = trh.HarmonizeRecord(wrapper.vcftype, next(wrapper.vcfreader))
-                        if not self.checkAdVNTRCall(2, new_record.ref_allele,
-                                                    new_record.motif):
+                        if not self.checkAdVNTRCall(new_record.motif,
+                                                    motif_complexity_threshold=0.7):
                             print("Skipped adVNTR call at " + str(new_record.pos))
                         else:
                             self.current_tr_records.append(new_record)
@@ -170,7 +170,46 @@ class Readers:
                ret.append(item.vcfrecord)
         return ret
 
-    def checkAdVNTRCall(self, n, ref, motif):
+    def get_normalized_sequence_similarity(self, a, b):
+        # Compute Hamming distance between two short sequences.
+        sequences_len = len(a)
+        if len(a) != len(b):
+            print("Warning: Computing sequence similarity between two sequences " +\
+                  "of different lengths: {} and {}".format(len(a), len(b)))
+            sequences_len = min(len(a), len(b))
+        similarity_score = 0
+        for idx in range(sequences_len):
+            # "M" character represent the masked character that matches
+            # any other character for the purpose of this filter.
+            if a[idx] == b[idx] or a[idx] == "M" or b[idx] == "M":
+                similarity_score += 1
+        return similarity_score / sequences_len
+
+    def get_motif_complexity_score(self, motif):
+        self_match_score = 0
+        for idx_in_mask in range(len(motif)):
+            # Masking a single character at a time and computing the
+            # max similarity score among all masked motifs.
+            # Masked character matches any other character.
+            masked_motif = motif[:idx_in_mask] + "M" + motif[idx_in_mask + 1:]
+            # Creating a rolling window to compare the masked motif with itself.
+            motif_window = masked_motif + masked_motif
+            for idx in range(1, len(masked_motif)):
+                end_idx_in_window = idx + len(masked_motif)
+                # Compute the max score among all possible positions
+                # when sliding the motif within the motif window to compare.
+                self_match_score = max(self_match_score,
+                                       self.get_normalized_sequence_similarity(masked_motif,
+                                                             motif_window[idx:end_idx_in_window]))
+        return self_match_score
+
+    def checkAdVNTRCall(self, motif, motif_complexity_threshold=0.7):
+        if self.get_motif_complexity_score(motif) > motif_complexity_threshold:
+            # VNTR is very much STR like. Skip this VNTR.
+            return False
+        return True
+
+    def checkAdVNTRCallDeprecated(self, n, ref, motif):
         cnt = 0
         cursor = 0
         homo_check = False
@@ -288,8 +327,8 @@ class Readers:
                         try:
                             new_record = trh.HarmonizeRecord(self.vcfwrappers[idx].vcftype,
                                             next(self.vcfwrappers[idx].vcfreader))
-                            if not self.checkAdVNTRCall(2, new_record.ref_allele,
-                                                    new_record.motif):
+                            if not self.checkAdVNTRCall(new_record.motif,
+                                                        motif_complexity_threshold=0.7):
                                 print("Skipped adVNTR call at " + str(new_record.pos))
                             else:
                                 new_records.append(new_record)
